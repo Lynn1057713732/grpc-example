@@ -3,8 +3,12 @@ package main
 import (
 	"context"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"log"
 	"net"
+	"runtime"
+	"time"
 
 	pb "grpc-example/proto"
 )
@@ -16,17 +20,7 @@ const (
 	Network string = "tcp"
 )
 
-type SimpleService struct{}
 
-func (s *SimpleService) Route(ctx context.Context, req *pb.SimpleRequest) (*pb.SimpleResponse, error) {
-	res := pb.SimpleResponse{
-		Code: 200,
-		Value: "hello " + req.Data,
-	}
-
-	return &res, nil
-
-}
 
 func main()  {
 	//监听本地端口
@@ -48,9 +42,41 @@ func main()  {
 		log.Fatalf("gPRC Server err: %v", err)
 
 	}
+}
 
+type SimpleService struct{}
 
+func (s *SimpleService) Route(ctx context.Context, req *pb.SimpleRequest) (*pb.SimpleResponse, error) {
+	data := make(chan *pb.SimpleResponse, 1)
+	defer close(data)
 
+	go handle(ctx, req, data)
+	select {
+	case res := <-data:
+		return res, nil
+	case <-ctx.Done():
+		return nil, status.Errorf(codes.Canceled, "Client cancelled, abandoning.")
+	}
+}
+
+func handle(ctx context.Context, req *pb.SimpleRequest, data chan<- *pb.SimpleResponse) {
+	select {
+	case <- ctx.Done():
+		log.Println(ctx.Err())
+		log.Println("handle go routine exit")
+		runtime.Goexit()  //超时后退出go协程
+	case <- time.After(2 * time.Second): // 模拟耗时操作
+		res := pb.SimpleResponse{
+			Code: 200,
+			Value: "hello " + req.Data,
+		}
+		//修改数据库前，进行超时判断
+		//if ctx.Err() == context.Canceled {
+		//	//如果已经超时，则退出
+		//}
+		data <- &res
+
+	}
 }
 
 
