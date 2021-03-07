@@ -4,10 +4,13 @@ import (
 	"context"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/metadata"
 	status "google.golang.org/grpc/status"
 	"log"
 	"time"
 
+	"grpc-example/server/middleware/auth"
 	pb "grpc-example/proto"
 )
 
@@ -17,17 +20,37 @@ var gRPCClient pb.SimpleClient
 
 
 func main() {
+	//从输入的证书文件中为客户端构造TLS凭证
+	creds, err := credentials.NewClientTLSFromFile("../tls/server.pem", "go-grpc-example")
+	if err != nil {
+		log.Fatalf("Failed to create TLS credentials %v", err)
+	}
+
+	//构建Token
+	token := auth.Token{
+		AppID:     "grpc_token",
+		AppSecret: "123456",
+	}
+
 	//连接服务器
-	conn, err := grpc.Dial(Address, grpc.WithInsecure())
+	conn, err := grpc.Dial(Address, grpc.WithTransportCredentials(creds), grpc.WithPerRPCCredentials(&token))
 	if err != nil {
 		log.Fatalf("met connect err: %v", err)
 	}
 	defer conn.Close()
 
+
 	ctx := context.Background()
+	//灵活添加gRPC的metadata
+	md := metadata.Pairs(
+			"traceId", "11111", "meId", "22222",
+			)
+	//NewOutgoingContext底层调用了的withValue方法
+	ctx = metadata.NewOutgoingContext(ctx, md)
+
 	//建立gRPC连接
 	gRPCClient = pb.NewSimpleClient(conn)
-	route(ctx, 1)
+	route(ctx, 3)
 }
 
 //route调用服务端你的Route方法
