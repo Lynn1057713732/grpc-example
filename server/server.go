@@ -4,7 +4,6 @@ import (
 	"context"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"log"
@@ -12,7 +11,16 @@ import (
 	"runtime"
 	"time"
 
+	grpc_middleware "github.com/grpc-ecosystem/go-grpc-middleware"
+	grpc_auth "github.com/grpc-ecosystem/go-grpc-middleware/auth"
+	grpc_zap "github.com/grpc-ecosystem/go-grpc-middleware/logging/zap"
+	grpc_recovery "github.com/grpc-ecosystem/go-grpc-middleware/recovery"
+
 	pb "grpc-example/proto"
+	"grpc-example/server/middleware/auth"
+	"grpc-example/server/middleware/cred"
+	"grpc-example/server/middleware/recovery"
+	"grpc-example/server/middleware/zap"
 )
 
 const (
@@ -31,27 +39,30 @@ func main()  {
 		log.Fatalf("net listen err: %v", err)
 	}
 
-	// 从输入证书文件和密钥文件为服务端构造TLS凭证
-	creds, err := credentials.NewServerTLSFromFile("../tls/server.pem", "../tls/server.key")
-	if err != nil {
-		log.Fatalf("Failed to generate credentials %v", err)
-	}
-
-	//普通方法：一元拦截器（grpc.UnaryInterceptor）
-	var interceptor grpc.UnaryServerInterceptor
-	interceptor = func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (resp interface{}, err error) {
-		//拦截普通方法请求，验证Token
-		err = Check(ctx)
-		if err != nil {
-			return
-		}
-		// 继续处理请求
-		return handler(ctx, req)
-	} 
-
-
 	//新建gRPC服务器实例
-	gRPCServer := grpc.NewServer(grpc.Creds(creds), grpc.UnaryInterceptor(interceptor))
+	gRPCServer := grpc.NewServer(
+		cred.TLSInterceptor(),
+		grpc.ChainStreamInterceptor(
+			grpc_middleware.ChainStreamServer(
+				// grpc_ctxtags.StreamServerInterceptor(),
+				// grpc_opentracing.StreamServerInterceptor(),
+				// grpc_prometheus.StreamServerInterceptor,
+				grpc_zap.StreamServerInterceptor(zap.ZapInterceptor()),
+				grpc_auth.StreamServerInterceptor(auth.AuthInterceptor),
+				grpc_recovery.StreamServerInterceptor(recovery.RecoveryInterceptor()),
+				),
+			),
+		grpc.ChainUnaryInterceptor(
+			grpc_middleware.ChainUnaryServer(
+				// grpc_ctxtags.StreamServerInterceptor(),
+				// grpc_opentracing.StreamServerInterceptor(),
+				// grpc_prometheus.StreamServerInterceptor,
+				grpc_zap.UnaryServerInterceptor(zap.ZapInterceptor()),
+				grpc_auth.UnaryServerInterceptor(auth.AuthInterceptor),
+				grpc_recovery.UnaryServerInterceptor(recovery.RecoveryInterceptor()),
+				),
+			),
+		)
 
 	//在gRPC服务器中注册我们的服务
 	pb.RegisterSimpleServer(gRPCServer, &SimpleService{})
@@ -70,6 +81,11 @@ type SimpleService struct{}
 func (s *SimpleService) Route(ctx context.Context, req *pb.SimpleRequest) (*pb.SimpleResponse, error) {
 	data := make(chan *pb.SimpleResponse, 1)
 	defer close(data)
+
+	//从上下文中获取特殊的元数据,做一些特殊的处理
+	md, _ := metadata.FromIncomingContext(ctx)
+	log.Println(md)
+
 
 	go handle(ctx, req, data)
 	select {

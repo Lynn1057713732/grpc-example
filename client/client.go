@@ -10,7 +10,7 @@ import (
 	"log"
 	"time"
 
-	"grpc-example/server/middleware/auth"
+	"grpc-example/client/auth"
 	pb "grpc-example/proto"
 )
 
@@ -28,8 +28,7 @@ func main() {
 
 	//构建Token
 	token := auth.Token{
-		AppID:     "grpc_token",
-		AppSecret: "123456",
+		Value: "bearer grpc.auth.token",
 	}
 
 	//连接服务器
